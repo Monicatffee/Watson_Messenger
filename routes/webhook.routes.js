@@ -132,13 +132,14 @@ router.post('/webhook', function (req, res) {
                   
                 } else if (event.postback) {
                     let eventPostback = handlePostback(event)
-                    console.log("evento en el post: ", eventPostback);
 
-                    mensajeria(event.message)
+                    let input = {
+                        text: eventPostback
+                    }
+                    mensajeria(input)
                     .then(async (data) => {
 
                         resWatson = data.response
-                        console.log(JSON.stringify(resWatson, null, 2));
                         handleMessage(event, data);
                         
                     })
@@ -171,7 +172,6 @@ function handlePostback(event) {
     var recipientID = event.recipient.id;
     var timeOfPostback = event.timestamp;
     var payload = event.postback.payload;
-    console.log("PAYLOAD: ", payload);
 
     return payload
 
@@ -285,6 +285,41 @@ function aVideo(senderID, messageText) {
     sendVideoYoutube(senderID, translate);
   }
 
+
+  /**
+ * 
+ *  Los videos desde youtube deben hacerse con pñlantillas genericas.
+ */
+function sendVideoYoutube(recipientID, messageText, senderID) {
+    var messageData = {
+      recipient: {
+        id: recipientID
+      },
+      message: {
+        attachment: {
+          type: "template",
+          payload: {
+            template_type: "generic",
+            elements: [{
+              title: "Cómo comprar en Offcorss",
+              image_url: "https://i.ytimg.com/vi/4nIuogTusQA/hqdefault.jpg",
+              default_action: {
+                type: "web_url",
+                url: datoVideo,
+                messenger_extensions: false,
+              },
+              "buttons": [{
+                "type": "web_url",
+                "url": "https://youtu.be/4nIuogTusQA",
+                "title": "Ir al video"
+              }]
+            }]
+          }
+        }
+      }
+    };
+    callSendAPI(messageData);
+  }
 
 function sendList(senderID, messageText) {
     splitWatson = msgWatson.split("_lista");
