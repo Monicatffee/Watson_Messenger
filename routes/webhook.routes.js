@@ -11,39 +11,70 @@ var assistant = new AssistantV2({
     version: '2018-09-19'
 });
 
-var newContext = {
-    global: {
-        system: {
-            turn_count: 1
-        }
-    }
-};
+   // Función para recibir el session Id de watson assistant
+   function obtenerId() {
+    return new Promise(resolve => {
 
-// Session ID
-var sessionId = '';
-assistant.createSession({
-    assistant_id: process.env.ASSISTANT_ID
-}, (err, response) => {
-    if (err) {
-        console.error(err);
-    } else {
-        sessionId = response.session_id.replace(/['"]+/g, '');
-        console.log("Session_id: ", sessionId);
-    }
-});
+        assistant.createSession({
+            // Identificador de la instancia "Assistants"
+            assistant_id: `${process.env.ASSISTANT_ID}`,
+        }, function (err, response) {
+            if (err) {
+                console.error(err);
+                resolve(err)
+            } else {
+                let sessionId = JSON.stringify(response.session_id)
+                resolve(sessionId.replace(/['"]+/g, ''))
+            }
+        });
+    })
+}
+
+// Función para enviar mensaje a Watson Assistant
+function enviaMensajeWatson(sessionId, text) {
+    return new Promise(resolve => {
+
+        assistant.message({
+            assistant_id: `${process.env.ASSISTANT_ID}`,
+            session_id: `${sessionId}`,
+            input: text
+        }, (err, response) => {
+            if (err) {
+                console.error('Error: ', err);
+            } else {
+                resolve(response);
+            }
+        });
+    });
+}
+
+async function mensajeria(text) {
+    let idUsuario = await obtenerId();
+    let response = await enviaMensajeWatson(idUsuario, text);
+    let resultado = {
+        response,
+        idUsuario
+    };
+    return resultado;
+}
 
 
 /** Variables globales */
 var datoBoton = '';
 var datoBotones = '';
+var datoUser = '';
 var splitWatson = '';
 var datoSplit = '';
+var translate = '';
 var msgWatson = '';
 var boton = [];
+var lista = [];
 var i;
 var btn = '';
 var respRapis = [];
+var respList = []
 var respRapi = [];
+var userName = '';
 
 /** */
 
@@ -92,43 +123,28 @@ router.post('/webhook', function (req, res) {
             entry.messaging.forEach(function (event) {
                 if (event.message) {
 
-                    // console.log("Mensaje recibido");
-                    const assistantID = process.env.ASSISTANT_ID;
-
-                    var payload = {
-                        assistant_id: assistantID,
-                        session_id: `${sessionId}`,
-                        input: event.message
-                    };
-
-                    // Mensajes desde Watson Assistant
-                    assistant.message(payload, function (err, data) {
-                        if (err) {
-                            console.log("error");
-                            // console.log(err);
-
-                            if (!sessionId) {
-                                assistant.createSession({
-                                    assistant_id: process.env.ASSISTANT_ID
-                                }, (err, response) => {
-                                    if (err) {
-                                        console.error(err);
-                                    } else {
-                                        sessionId = response.session_id.replace(/['"]+/g, '');
-                                        console.log("Session_id: ", sessionId);
-                                    }
-                                });
-
-                                return sessionId;
-                            }
-                            // return res.status(err.code || 500).json(err);
-                        }
-                        receivedMessage(event, data);
-                        // console.log(JSON.stringify(data, null, 2));
-                    });
+                    mensajeria(event.message)
+                    .then(async (data) => {
+                        // resWatson = data.response
+                        // console.log(JSON.stringify(resWatson, null, 2));
+                        handleMessage(event, data);
+                    })
+                  
                 } else if (event.postback) {
-                    receivedPostback(event)
-                    console.log(event);
+                    let eventPostback = handlePostback(event)
+                    console.log("evento en el post: ", eventPostback);
+
+                    mensajeria(event.message)
+                    .then(async (data) => {
+
+                        resWatson = data.response
+                        console.log(JSON.stringify(resWatson, null, 2));
+                        handleMessage(event, data);
+                        
+                    })
+
+
+
                 } else {
                     console.log("Webhook received unknown event: ", event);
                 }
@@ -139,29 +155,77 @@ router.post('/webhook', function (req, res) {
 });
 
 // Manejo de eventos entrantes
-function receivedMessage(event, watsonResponse) {
+function handleMessage(event, watsonResponse) {
     // Capturamos los datos del que genera el evento y el mensaje 
     var senderID = event.sender.id;
-    var recipientID = event.recipient.id;
-    var timeOfMessage = event.timestamp;
-    var message = event.message;
-    msgWatson = watsonResponse.output.generic[0].text;
-    var messageId = message.mid;
-    var messageText = message.text;
-    var quickReply = message.text;
+    msgWatson = watsonResponse.response.output.generic[0].text
 
-    // console.log(messageText);
-    evaluarMensaje(senderID, messageText);
-    console.log(messageText);
+    userInfo(senderID);
+    evaluarMensaje(senderID, msgWatson);
 
-    // switch (payload) {
-    //     case 'GET_STARTED':
-    //         sendGetStarted(senderID);
-    //     default:
-    //         evaluarMensaje(senderID, messageText);
-    // }
 }
 
+
+function handlePostback(event) {
+    var senderID = event.sender.id;
+    var recipientID = event.recipient.id;
+    var timeOfPostback = event.timestamp;
+    var payload = event.postback.payload;
+    console.log("PAYLOAD: ", payload);
+
+    return payload
+
+}
+
+/** EVALUAR MENSAJE */
+function evaluarMensaje(senderID, messageText) {
+    if (isContain(msgWatson, '_lista')) {
+      sendList(senderID, translate);
+  
+    } else if (isContain(msgWatson, '_botones')) {
+      manyButtons(senderID, messageText);
+  
+    }
+    else if (isContain(msgWatson, '_vid')) {
+      aVideo(senderID, messageText);
+    }
+    else if (isContain(msgWatson, '_btn')) {
+      aButton(senderID, messageText)
+    }
+  
+    else {
+  
+      userInfo(senderID);
+
+      const comp = messageText.indexOf('_nombre')
+      console.log(comp);
+      if (comp !== -1) {
+        // message.replace("_nombre", userName.replace('"', ''))
+        var names = messageText.replace("_nombre", userName.replace(/['"]+/g, ''))
+        console.log(names);
+        sendTextMessage(senderID, names);
+  
+      } else {
+        sendTextMessage(senderID, messageText)
+      }
+  
+    }
+  }
+
+
+  // Función donde el chat respondera usando SendAPI
+function sendTextMessage(recipientId, messageText) {
+    var messageData = {
+        recipient: {
+            id: recipientId
+        },
+        message: {
+            text: messageText
+        }
+    };
+
+    callSendAPI(messageData);
+}
 
 // Función que envía en la quick replies un solo botón
 function aButton(senderID, messageText) {
@@ -202,90 +266,60 @@ function manyButtons(senderID, messageText) {
     boton = [];
 }
 
-/** EVALUAR MENSAJE */
-function evaluarMensaje(senderID, messageText) {
 
-    if (isContain(messageText, 'Empezar')) {
-        sendTextMessage(senderID, msgWatson);
-        // elementTemplate(senderID);
-        sendGetStarted(senderID);
-
-    } else
-     if (isContain(msgWatson, '_btn')) {
-        aButton(senderID, messageText);
-
-    } else if (isContain(msgWatson, '_botones')) {
-        manyButtons(senderID, messageText);
-
-    } else if (isContain(messageText, 'perfil')) {
-        elementTemplate(senderID);
-        console.log("Este es el perfil");
-
-    } else {
-        sendTextMessage(senderID, msgWatson);
+function aVideo(senderID, messageText) {
+    splitWatson = msgWatson.split("_vid");
+    datoSplit = splitWatson[0];
+  
+    userInfo(senderID);
+    const comp = datoSplit.indexOf('_nombre')
+    if (comp !== -1) {
+      // message.replace("_nombre", userName.replace('"', ''))
+      translate = datoSplit.replace("_nombre", userName.replace(/['"]+/g, ''))
+  
     }
-}
-
-// Función donde el chat respondera usando SendAPI
-function sendTextMessage(recipientId, messageText) {
-    var messageData = {
-        recipient: {
-            id: recipientId
-        },
-        message: {
-            text: messageText
-        }
-    };
-
-    callSendAPI(messageData);
-}
+    datoVideo = splitWatson[1];
+    console.log(datoVideo);
+  
+    sendTextMessage(senderID, translate);
+    sendVideoYoutube(senderID, translate);
+  }
 
 
-function receivedPostback(event) {
-    var senderID = event.sender.id;
-    var recipientID = event.recipient.id;
-    var timeOfPostback = event.timestamp;
-    var payload = event.postback.payload;
-
-    console.log("Received postback for user %d and page %d with payload '%s' " +
-        "at %d", senderID, recipientID, payload, timeOfPostback);
-
-    switch (payload) {
-        case 'GET_STARTED':
-            sendGetStarted(senderID);
-            break;
-        default:
-            sendTextMessage(senderID, msgWatson);
+function sendList(senderID, messageText) {
+    splitWatson = msgWatson.split("_lista");
+    datoSplit = splitWatson[0];
+  
+    userInfo(senderID);
+    const comp = datoSplit.indexOf('_nombre')
+    if (comp !== -1) {
+      // message.replace("_nombre", userName.replace('"', ''))
+      translate = datoSplit.replace("_nombre", userName.replace(/['"]+/g, ''))
+  
+  
     }
-}
-
-function sendGetStarted(senderID) {
-    var messageData = {
-        recipient: {
-            id: senderID
-        },
-        message: {
-            attachment: {
-                type: "template",
-                payload: {
-                    template_type: "generic",
-                    elements: [{
-                        title: "Bienvenido a offCors",
-                        image_url: "https://storage.googleapis.com/twg-content/images/OffCors_hero.width-1200.jpg",
-                        subtitle: "Tienda de ropa para niños",
-                        default_action: {
-                            type: "web_url",
-                            url: "https://www.offcorss.com/",
-                            messenger_extensions: false,
-                        },
-                    }]
-                }
-            }
-        }
-    };
-    callSendAPI(messageData);
-}
-
+    datoLista = splitWatson[1].split(",");
+  
+    for (i of datoLista) {
+      lst = i;
+      respList = {
+        title: lst,
+        image_url: 'https://external.feoh3-1.fna.fbcdn.net/safe_image.php?d=AQBRYVY0pouQzYLM&url=https%3A%2F%2Fsodimacco-chatbot.mybluemix.net%2Fimages%2Flist_template%2Fprecio_y_disponibilidad.png&_nc_hash=AQACpBXBqrjVUSJw',
+        buttons: [
+          {
+            title: "Ver",
+            type: "postback",
+            payload: lst
+          }
+        ]
+      };
+      lista.push(respList);
+    }
+  
+    sendTextMessage(senderID, translate);
+    sendQuickList(senderID, translate);
+    lista = [];
+  }
 
 // function sendGetStarted(senderID) {
 //     var messageData = {
@@ -293,47 +327,30 @@ function sendGetStarted(senderID) {
 //             id: senderID
 //         },
 //         get_started: {
-//             payload: "postback_payload"
-//         },
-//         message: {
-//             attachment: {
-//                 type: "template",
-//                 payload: {
-//                     template_type: "list",
-//                     top_element_style: "compact",
-//                     elements: [
-//                         {
-//                             title: "Tiendas y ho rarios",
-//                             subtitle: "Ver todas las tiendas",
-//                             image_url: "https://storage.googleapis.com/twg-content/images/OffCors_hero.width-1200.jpg",
-//                             buttons: [
-//                                 {
-//                                     title: "Ver",
-//                                     type: "web_url",
-//                                     url: "https://www.offcorss.com/",
-//                                     messenger_extensions: "true",
-//                                     webview_height_ratio: "tall",
-//                                     fallback_url: "https://www.offcorss.com/"
-//                                 }
-//                             ]
-//                         },
-//                         {
-//                             title: "Classic White T-Shirt",
-//                             subtitle: "See all our colors",
-//                             default_action: {
-//                                 "type": "web_url",
-//                                 "url": "https://www.offcorss.com/",
-//                                 "messenger_extensions": false,
-//                                 "webview_height_ratio": "tall"
-//                             }
-//                         }
-//                     ]
-//                 }
-//             }
+//             payload: "postback"
 //         }
 //     };
 //     callSendAPI(messageData);
 // }
+
+function sendQuickList(recipientID) {
+    var messageData = {
+      recipient: {
+        id: recipientID
+      },
+      message: {
+        attachment: {
+          type: "template",
+          payload: {
+            template_type: "list",
+            top_element_style: "compact",
+            elements: lista
+          }
+        }
+      }
+    }
+    callSendAPI(messageData);
+  }
 
 // Quick replies
 function sendQuickReply(recipientId, quickReply, title) {
@@ -421,6 +438,21 @@ function callSendAPI(messageData) {
     });
 }
 
+function userInfo(senderID) {
+    var url = {
+      uri: 'https://graph.facebook.com/' + senderID + '?fields=first_name,last_name,profile_pic&access_token=' + process.env.PAGE_ACCESS_TOKEN
+    };
+  
+    request(url, (error, response, body) => {
+  
+      var datos = JSON.parse(body);
+      userName = JSON.stringify(datos.first_name, null, 2)
+      // console.log("name: ", userName);
+      return userName
+    });
+  }
+  
+
 // Texto que el user ingresa
 function isContain(texto, word) {
     if (typeof texto == 'undefined' || texto.lenght <= 0) return false;
@@ -428,3 +460,4 @@ function isContain(texto, word) {
 }
 
 module.exports = router;
+
